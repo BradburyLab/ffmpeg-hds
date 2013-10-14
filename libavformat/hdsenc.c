@@ -19,6 +19,7 @@
 
 #include <float.h>
 
+#include "libavutil/avassert.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/avstring.h"
@@ -59,13 +60,17 @@ static int hds_mux_init(AVFormatContext *s)
 {
     HDSContext *hls = s->priv_data;
     AVFormatContext *oc;
-    int i;
+    int i, av_unused err;
 
-    hls->avf = oc = avformat_alloc_context();
-    if (!oc)
+    //hls->avf = oc = avformat_alloc_context();
+    err = avformat_alloc_output_context2(&oc, hls->oformat, NULL, NULL);
+    if (!oc) {
+        //print_error(s->filename, err);
         return AVERROR(ENOMEM);
+    }
+    //oc->oformat            = hls->oformat;
 
-    oc->oformat            = hls->oformat;
+    hls->avf = oc;
     oc->interrupt_callback = s->interrupt_callback;
 
     for (i = 0; i < s->nb_streams; i++) {
@@ -165,7 +170,9 @@ static int hds_start(AVFormatContext *s)
         return err;
 
     //if (oc->oformat->priv_class && oc->priv_data)
-    //    av_opt_set(oc->priv_data, "mpegts_flags", "resend_headers", 0);
+    //    av_opt_set(oc->priv_data, "flv_flags", "fragmented_output", 0);
+    av_assert0(oc->oformat->priv_class && oc->priv_data);
+    av_opt_set(oc->priv_data, "flv_flags", "fragmented_output", 0);
 
     return 0;
 }
@@ -293,7 +300,8 @@ static int hds_write_trailer(struct AVFormatContext *s)
     HDSContext *hls = s->priv_data;
     AVFormatContext *oc = hls->avf;
 
-    av_write_trailer(oc);
+    // No trailers!
+    //av_write_trailer(oc);
     avio_closep(&oc->pb);
     avformat_free_context(oc);
     av_free(hls->basename);
