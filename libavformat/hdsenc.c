@@ -131,32 +131,16 @@ static void free_entries(HDSContext *hls)
 static int hds_window(AVFormatContext *s, int last)
 {
     HDSContext *hls = s->priv_data;
-    ListEntry *en;
-    int target_duration = 0;
     int ret = 0;
+
+    // :TODO: generate abst file & make this configurable
+    return ret;
 
     if ((ret = avio_open2(&hls->pb, s->filename, AVIO_FLAG_WRITE,
                           &s->interrupt_callback, NULL)) < 0)
         goto fail;
 
-    for (en = hls->list; en; en = en->next) {
-        if (target_duration < en->duration)
-            target_duration = en->duration;
-    }
-
-    avio_printf(hls->pb, "#EXTM3U\n");
-    avio_printf(hls->pb, "#EXT-X-VERSION:3\n");
-    avio_printf(hls->pb, "#EXT-X-TARGETDURATION:%d\n", target_duration);
-    avio_printf(hls->pb, "#EXT-X-MEDIA-SEQUENCE:%"PRId64"\n",
-                FFMAX(0, hls->sequence - hls->size));
-
-    for (en = hls->list; en; en = en->next) {
-        avio_printf(hls->pb, "#EXTINF:%d,\n", en->duration);
-        avio_printf(hls->pb, "%s\n", en->name);
-    }
-
-    if (last)
-        avio_printf(hls->pb, "#EXT-X-ENDLIST\n");
+    // :TODO:
 
 fail:
     avio_closep(&hls->pb);
