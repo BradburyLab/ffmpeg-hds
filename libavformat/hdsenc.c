@@ -170,7 +170,7 @@ static int hds_start(AVFormatContext *s)
     int err = 0;
 
     if (av_get_frame_filename(oc->filename, sizeof(oc->filename),
-                              c->basename, c->wrap ? c->number % c->wrap : c->number) < 0) {
+                              c->basename, (c->wrap ? c->number % c->wrap : c->number) + 1) < 0) {
         av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s'\n", c->basename);
         return AVERROR(EINVAL);
     }
@@ -191,7 +191,7 @@ static int hds_write_header(AVFormatContext *s)
     HDSContext *hls = s->priv_data;
     int ret, i;
     char *p;
-    const char *pattern = "%d.ts";
+    const char *pattern = "/Seg1-Frag%d";
     int basename_size = strlen(s->filename) + strlen(pattern) + 1;
 
     hls->number      = 0;
@@ -224,7 +224,7 @@ static int hds_write_header(AVFormatContext *s)
 
     strcpy(hls->basename, s->filename);
 
-    p = strrchr(hls->basename, '.');
+    p = strrchr(hls->basename, '/');
 
     if (p)
         *p = '\0';
