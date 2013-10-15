@@ -276,7 +276,8 @@ static int hds_write_packet(AVFormatContext *s, AVPacket *pkt)
         hls->end_pts = pkt->pts;
         hls->duration = 0;
 
-        av_write_frame(oc, NULL); /* Flush any buffered data */
+        // tell flv muxer to end mdat box
+        av_write_frame(oc, NULL);
         avio_close(oc->pb);
 
         ret = hds_start(s);
@@ -300,7 +301,7 @@ static int hds_write_trailer(struct AVFormatContext *s)
     HDSContext *hls = s->priv_data;
     AVFormatContext *oc = hls->avf;
 
-    // No trailers!
+    // :TRICKY: No trailer call(s) because we have no headers to update!
     //av_write_trailer(oc);
     avio_closep(&oc->pb);
     avformat_free_context(oc);

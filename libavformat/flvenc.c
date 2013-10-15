@@ -29,7 +29,7 @@
 #include "flv.h"
 #include "internal.h"
 #include "metadata.h"
-
+#include "avio_internal.h" // ffio_wfourcc()
 
 static const AVCodecTag flv_video_codec_ids[] = {
     { AV_CODEC_ID_FLV1,     FLV_CODECID_H263 },
@@ -65,7 +65,8 @@ typedef struct FLVContext {
     int64_t duration;
     int64_t delay;      ///< first dts delay (needed for AVC & Speex)
 
-#define FLV_FLAG_FRAGMENTED_OUT  0x01
+#define FLV_FLAG_START_FRAGMENT  0x01
+#define FLV_FLAG_FRAGMENTED_OUT  0x02
     int flags;
 } FLVContext;
 
@@ -195,6 +196,41 @@ static void put_amf_bool(AVIOContext *pb, int b)
     avio_w8(pb, !!b);
 }
 
+static void write_sequence_headers(AVFormatContext *s)
+{
+    AVIOContext *pb = s->pb;
+    int64_t data_size;
+    int i;
+    for (i = 0; i < s->nb_streams; i++) {
+        AVCodecContext *enc = s->streams[i]->codec;
+        if (enc->codec_id == AV_CODEC_ID_AAC || enc->codec_id == AV_CODEC_ID_H264 || enc->codec_id == AV_CODEC_ID_MPEG4) {
+            int64_t pos;
+            avio_w8(pb, enc->codec_type == AVMEDIA_TYPE_VIDEO ?
+                    FLV_TAG_TYPE_VIDEO : FLV_TAG_TYPE_AUDIO);
+            avio_wb24(pb, 0); // size patched later
+            avio_wb24(pb, 0); // ts
+            avio_w8(pb, 0);   // ts ext
+            avio_wb24(pb, 0); // streamid
+            pos = avio_tell(pb);
+            if (enc->codec_id == AV_CODEC_ID_AAC) {
+                avio_w8(pb, get_audio_flags(s, enc));
+                avio_w8(pb, 0); // AAC sequence header
+                avio_write(pb, enc->extradata, enc->extradata_size);
+            } else {
+                avio_w8(pb, enc->codec_tag | FLV_FRAME_KEY); // flags
+                avio_w8(pb, 0); // AVC sequence header
+                avio_wb24(pb, 0); // composition time
+                ff_isom_write_avcc(pb, enc->extradata, enc->extradata_size);
+            }
+            data_size = avio_tell(pb) - pos;
+            avio_seek(pb, -data_size - 10, SEEK_CUR);
+            avio_wb24(pb, data_size);
+            avio_skip(pb, data_size + 10 - 3);
+            avio_wb32(pb, data_size + 11); // previous tag size
+        }
+    }
+}
+
 static int flv_write_header(AVFormatContext *s)
 {
     AVIOContext *pb = s->pb;
@@ -266,7 +302,9 @@ static int flv_write_header(AVFormatContext *s)
 
     flv->delay = AV_NOPTS_VALUE;
 
-    if (!(flv->flags & FLV_FLAG_FRAGMENTED_OUT)) {
+    if (flv->flags & FLV_FLAG_START_FRAGMENT) {
+        flv->flags |= FLV_FLAG_FRAGMENTED_OUT;
+    } else {
         avio_write(pb, "FLV", 3);
         avio_w8(pb, 1);
         avio_w8(pb, FLV_HEADER_FLAG_HASAUDIO * !!audio_enc +
@@ -392,34 +430,7 @@ static int flv_write_header(AVFormatContext *s)
         avio_skip(pb, data_size + 10 - 3);
         avio_wb32(pb, data_size + 11);
 
-        for (i = 0; i < s->nb_streams; i++) {
-            AVCodecContext *enc = s->streams[i]->codec;
-            if (enc->codec_id == AV_CODEC_ID_AAC || enc->codec_id == AV_CODEC_ID_H264 || enc->codec_id == AV_CODEC_ID_MPEG4) {
-                int64_t pos;
-                avio_w8(pb, enc->codec_type == AVMEDIA_TYPE_VIDEO ?
-                        FLV_TAG_TYPE_VIDEO : FLV_TAG_TYPE_AUDIO);
-                avio_wb24(pb, 0); // size patched later
-                avio_wb24(pb, 0); // ts
-                avio_w8(pb, 0);   // ts ext
-                avio_wb24(pb, 0); // streamid
-                pos = avio_tell(pb);
-                if (enc->codec_id == AV_CODEC_ID_AAC) {
-                    avio_w8(pb, get_audio_flags(s, enc));
-                    avio_w8(pb, 0); // AAC sequence header
-                    avio_write(pb, enc->extradata, enc->extradata_size);
-                } else {
-                    avio_w8(pb, enc->codec_tag | FLV_FRAME_KEY); // flags
-                    avio_w8(pb, 0); // AVC sequence header
-                    avio_wb24(pb, 0); // composition time
-                    ff_isom_write_avcc(pb, enc->extradata, enc->extradata_size);
-                }
-                data_size = avio_tell(pb) - pos;
-                avio_seek(pb, -data_size - 10, SEEK_CUR);
-                avio_wb24(pb, data_size);
-                avio_skip(pb, data_size + 10 - 3);
-                avio_wb32(pb, data_size + 11); // previous tag size
-            }
-        }
+        write_sequence_headers(s);
     }
 
     return 0;
@@ -458,7 +469,7 @@ static int flv_write_trailer(AVFormatContext *s)
     return 0;
 }
 
-static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
+static int flv_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
 {
     AVIOContext *pb      = s->pb;
     AVCodecContext *enc  = s->streams[pkt->stream_index]->codec;
@@ -593,11 +604,36 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
     return pb->error;
 }
 
+static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
+{
+    FLVContext *flv = s->priv_data;
+    AVIOContext *pb = s->pb;
+    int ret = 0;
+
+    if (pkt) {
+        if (flv->flags & FLV_FLAG_START_FRAGMENT) {
+            // start mdat box
+            flv->flags &= ~FLV_FLAG_START_FRAGMENT;
+
+            //flv->mdat_pos = avio_tell(pb);
+            avio_wb32(pb, 0); /* until the end of the file */
+            ffio_wfourcc(pb, "mdat");
+
+            write_sequence_headers(s);
+        }
+        ret = flv_write_packet_internal(s, pkt);
+    } else if (flv->flags & FLV_FLAG_FRAGMENTED_OUT) {
+        // flush for fragmented output => close mdat box =>
+        // 0 is fine because it means "until the end of the file"
+    }
+    return ret;
+}
+
 static const AVOption options[] = {
     { "flv_flags", "FLV muxing flags", offsetof(FLVContext, flags), AV_OPT_TYPE_FLAGS, {.i64 = 0}, 0, INT_MAX,
       AV_OPT_FLAG_ENCODING_PARAM, "flv_flags" },
     { "fragmented_output", "Make result file ready for HDS streaming (without header etc - see -f hds)",
-      0, AV_OPT_TYPE_CONST, {.i64 = FLV_FLAG_FRAGMENTED_OUT}, 0, INT_MAX,
+      0, AV_OPT_TYPE_CONST, {.i64 = FLV_FLAG_START_FRAGMENT}, 0, INT_MAX,
       AV_OPT_FLAG_ENCODING_PARAM, "flv_flags"},
     { NULL },
 };
@@ -624,6 +660,6 @@ AVOutputFormat ff_flv_muxer = {
                           flv_video_codec_ids, flv_audio_codec_ids, 0
                       },
     .flags          = AVFMT_GLOBALHEADER | AVFMT_VARIABLE_FPS |
-                      AVFMT_TS_NONSTRICT,
+                      AVFMT_TS_NONSTRICT | AVFMT_ALLOW_FLUSH,
     .priv_class     = &flv_muxer_class,
 };
