@@ -59,6 +59,7 @@ static const AVCodecTag flv_audio_codec_ids[] = {
 };
 
 typedef struct FLVContext {
+    const AVClass *class;  // Class for private options.
     int     reserved;
     int64_t duration_offset;
     int64_t filesize_offset;
@@ -297,6 +298,8 @@ static int flv_write_header(AVFormatContext *s)
 
         if (enc->codec_tag == 5) {
             flv->reserved = 5;
+        } else {
+            flv->reserved = 0; // E.4 FLV Tag Definition says "Always 0", not a random number
         }
    }
 

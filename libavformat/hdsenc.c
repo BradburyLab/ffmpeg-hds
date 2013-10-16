@@ -25,6 +25,7 @@
 #include "libavutil/avstring.h"
 #include "libavutil/opt.h"
 #include "libavutil/log.h"
+#include "libavutil/timestamp.h"
 
 #include "avformat.h"
 #include "internal.h"
@@ -54,6 +55,8 @@ typedef struct HDSContext {
     ListEntry *end_list;
     char *basename;
     AVIOContext *pb;
+
+    int is_first_pkt;      ///< tells if it is the first packet in the segment
 } HDSContext;
 
 static int hds_mux_init(AVFormatContext *s)
@@ -174,6 +177,8 @@ static int hds_start(AVFormatContext *s)
     av_assert0(oc->oformat->priv_class && oc->priv_data);
     av_opt_set(oc->priv_data, "flv_flags", "fragmented_output", 0);
 
+    c->is_first_pkt = 1;
+
     return 0;
 }
 
@@ -230,7 +235,6 @@ static int hds_write_header(AVFormatContext *s)
 
     if ((ret = avformat_write_header(hls->avf, NULL)) < 0)
         return ret;
-
 
 fail:
     if (ret) {
@@ -289,6 +293,13 @@ static int hds_write_packet(AVFormatContext *s, AVPacket *pkt)
 
         if ((ret = hds_window(s, 0)) < 0)
             return ret;
+    }
+
+    if (hls->is_first_pkt) {
+        av_log(s, AV_LOG_WARNING, "hds:'%s' starts with packet stream:%d pts:%s pts_time:%s\n",
+               hls->avf->filename, pkt->stream_index,
+               av_ts2str(pkt->pts), av_ts2timestr(pkt->pts, &st->time_base));
+        hls->is_first_pkt = 0;
     }
 
     ret = ff_write_chained(oc, pkt->stream_index, pkt, s);
