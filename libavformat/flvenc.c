@@ -197,7 +197,13 @@ static void put_amf_bool(AVIOContext *pb, int b)
     avio_w8(pb, !!b);
 }
 
-static void write_sequence_headers(AVFormatContext *s)
+static void flv_write_ts(AVIOContext *pb, unsigned ts)
+{
+    avio_wb24(pb, ts);
+    avio_w8(pb, (ts >> 24) & 0x7F); // timestamps are 32 bits _signed_
+}
+
+static void write_sequence_headers(AVFormatContext *s, unsigned ts)
 {
     AVIOContext *pb = s->pb;
     int64_t data_size;
@@ -209,8 +215,7 @@ static void write_sequence_headers(AVFormatContext *s)
             avio_w8(pb, enc->codec_type == AVMEDIA_TYPE_VIDEO ?
                     FLV_TAG_TYPE_VIDEO : FLV_TAG_TYPE_AUDIO);
             avio_wb24(pb, 0); // size patched later
-            avio_wb24(pb, 0); // ts
-            avio_w8(pb, 0);   // ts ext
+            flv_write_ts(pb, ts);
             avio_wb24(pb, 0); // streamid
             pos = avio_tell(pb);
             if (enc->codec_id == AV_CODEC_ID_AAC) {
@@ -433,7 +438,7 @@ static int flv_write_header(AVFormatContext *s)
         avio_skip(pb, data_size + 10 - 3);
         avio_wb32(pb, data_size + 11);
 
-        write_sequence_headers(s);
+        write_sequence_headers(s, 0);
     }
 
     return 0;
@@ -470,6 +475,14 @@ static int flv_write_trailer(AVFormatContext *s)
 
     avio_seek(pb, file_size, SEEK_SET);
     return 0;
+}
+
+static int64_t flv_calc_ts(AVPacket *pkt, FLVContext *flv)
+{
+    if (flv->delay == AV_NOPTS_VALUE)
+        flv->delay = (pkt->dts >= 0) ? 0 : -pkt->dts;
+
+    return pkt->dts + flv->delay; // add delay to force positive dts
 }
 
 static int flv_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
@@ -535,16 +548,13 @@ static int flv_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
         av_log(s, AV_LOG_WARNING, "aac bitstream error\n");
     }
 
-    if (flv->delay == AV_NOPTS_VALUE)
-        flv->delay = -pkt->dts;
+    ts = flv_calc_ts(pkt, flv);
 
     if (pkt->dts < -flv->delay) {
         av_log(s, AV_LOG_WARNING,
                "Packets are not in the proper order with respect to DTS\n");
         return AVERROR(EINVAL);
     }
-
-    ts = pkt->dts + flv->delay; // add delay to force positive dts
 
     /* check Speex packet duration */
     if (enc->codec_id == AV_CODEC_ID_SPEEX && ts - sc->last_ts > 160)
@@ -556,8 +566,7 @@ static int flv_write_packet_internal(AVFormatContext *s, AVPacket *pkt)
         sc->last_ts = ts;
 
     avio_wb24(pb, size + flags_size);
-    avio_wb24(pb, ts);
-    avio_w8(pb, (ts >> 24) & 0x7F); // timestamps are 32 bits _signed_
+    flv_write_ts(pb, ts);
     avio_wb24(pb, flv->reserved);
 
     if (enc->codec_type == AVMEDIA_TYPE_DATA) {
@@ -622,7 +631,7 @@ static int flv_write_packet(AVFormatContext *s, AVPacket *pkt)
             avio_wb32(pb, 0); /* until the end of the file */
             ffio_wfourcc(pb, "mdat");
 
-            write_sequence_headers(s);
+            write_sequence_headers(s, flv_calc_ts(pkt, flv));
         }
         ret = flv_write_packet_internal(s, pkt);
     } else if (flv->flags & FLV_FLAG_FRAGMENTED_OUT) {

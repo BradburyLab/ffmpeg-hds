@@ -245,6 +245,14 @@ fail:
     return ret;
 }
 
+// %.6g in (av_ts_make_time_string) makes 2019059.274200 as 2.019+e6
+static inline char *av_ts_make_full_time_string(char *buf, int64_t ts, AVRational *tb)
+{
+    if (ts == AV_NOPTS_VALUE) snprintf(buf, AV_TS_MAX_STRING_SIZE, "NOPTS");
+    else                      snprintf(buf, AV_TS_MAX_STRING_SIZE, "%.6f", av_q2d(*tb) * ts);
+    return buf;
+}
+
 static int hds_write_packet(AVFormatContext *s, AVPacket *pkt)
 {
     HDSContext *hls = s->priv_data;
@@ -296,9 +304,10 @@ static int hds_write_packet(AVFormatContext *s, AVPacket *pkt)
     }
 
     if (hls->is_first_pkt) {
+        char time_buf[64];
         av_log(s, AV_LOG_WARNING, "hds:'%s' starts with packet stream:%d pts:%s pts_time:%s\n",
                hls->avf->filename, pkt->stream_index,
-               av_ts2str(pkt->pts), av_ts2timestr(pkt->pts, &st->time_base));
+               av_ts2str(pkt->pts), av_ts_make_full_time_string(time_buf, pkt->pts, &st->time_base));
         hls->is_first_pkt = 0;
     }
 
