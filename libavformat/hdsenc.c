@@ -38,8 +38,8 @@ typedef struct ListEntry {
 
 typedef struct HDSContext {
     const AVClass *class;  // Class for private options.
-    unsigned number;
-    int64_t sequence;
+    unsigned int number;
+    unsigned int start_fragment;
     AVOutputFormat *oformat;
     AVFormatContext *avf;
     float time;            // Set by a private option.
@@ -120,8 +120,6 @@ static int append_entry(HDSContext *hls, uint64_t duration)
     } else
         hls->nb_entries++;
 
-    hls->sequence++;
-
     return 0;
 }
 
@@ -190,7 +188,7 @@ static int hds_write_header(AVFormatContext *s)
     const char *pattern = "/Seg1-Frag%d";
     int basename_size = strlen(s->filename) + strlen(pattern) + 1;
 
-    hls->number      = 0;
+    hls->number      = hls->start_fragment - 1;
 
     hls->recording_time = hls->time * AV_TIME_BASE;
     hls->start_pts      = AV_NOPTS_VALUE;
@@ -337,7 +335,7 @@ static int hds_write_trailer(struct AVFormatContext *s)
 #define OFFSET(x) offsetof(HDSContext, x)
 #define E AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
-    {"hds_start_number",  "set first number in the sequence",        OFFSET(sequence),AV_OPT_TYPE_INT64,  {.i64 = 0},     0, INT64_MAX, E},
+    {"hds_start",     "set first fragment number",    OFFSET(start_fragment), AV_OPT_TYPE_INT,  {.i64 = 1},     0, INT64_MAX, E},
     {"hds_time",      "set segment length in seconds",           OFFSET(time),    AV_OPT_TYPE_FLOAT,  {.dbl = 2},     0, FLT_MAX, E},
     {"hds_list_size", "set maximum number of playlist entries",  OFFSET(size),    AV_OPT_TYPE_INT,    {.i64 = 5},     0, INT_MAX, E},
     {"hds_wrap",      "set number after which the index wraps",  OFFSET(wrap),    AV_OPT_TYPE_INT,    {.i64 = 0},     0, INT_MAX, E},
