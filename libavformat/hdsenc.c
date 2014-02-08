@@ -1,6 +1,7 @@
 /*
  * Adobe HTTP Dynamic Streaming segmenter
- * Copyright (c) 2013, Ilya Murav'jov
+ * Copyright (c) 2013-2014 Bradbury Lab
+ * Author: Ilya Murav'jov <muravyev@bradburylab.com>
  *
  * hdsenc.c is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
