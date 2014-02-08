@@ -1,5 +1,6 @@
 /*
  * Adobe HTTP Dynamic Streaming segmenter
+ *
  * Copyright (c) 2013-2014 Bradbury Lab
  * Author: Ilya Murav'jov <muravyev@bradburylab.com>
  *
@@ -62,19 +63,19 @@ typedef struct HDSContext {
 
 static int hds_mux_init(AVFormatContext *s)
 {
-    HDSContext *hls = s->priv_data;
+    HDSContext *hds = s->priv_data;
     AVFormatContext *oc;
     int i, av_unused err;
 
-    //hls->avf = oc = avformat_alloc_context();
-    err = avformat_alloc_output_context2(&oc, hls->oformat, NULL, NULL);
+    //hds->avf = oc = avformat_alloc_context();
+    err = avformat_alloc_output_context2(&oc, hds->oformat, NULL, NULL);
     if (!oc) {
         //print_error(s->filename, err);
         return AVERROR(ENOMEM);
     }
-    //oc->oformat            = hls->oformat;
+    //oc->oformat            = hds->oformat;
 
-    hls->avf = oc;
+    hds->avf = oc;
     oc->interrupt_callback = s->interrupt_callback;
 
     for (i = 0; i < s->nb_streams; i++) {
@@ -95,38 +96,38 @@ static int hds_mux_init(AVFormatContext *s)
     return 0;
 }
 
-static int append_entry(HDSContext *hls, uint64_t duration)
+static int append_entry(HDSContext *hds, uint64_t duration)
 {
     ListEntry *en = av_malloc(sizeof(*en));
 
     if (!en)
         return AVERROR(ENOMEM);
 
-    av_strlcpy(en->name, av_basename(hls->avf->filename), sizeof(en->name));
+    av_strlcpy(en->name, av_basename(hds->avf->filename), sizeof(en->name));
 
     en->duration = duration;
     en->next     = NULL;
 
-    if (!hls->list)
-        hls->list = en;
+    if (!hds->list)
+        hds->list = en;
     else
-        hls->end_list->next = en;
+        hds->end_list->next = en;
 
-    hls->end_list = en;
+    hds->end_list = en;
 
-    if (hls->nb_entries >= hls->size) {
-        en = hls->list;
-        hls->list = en->next;
+    if (hds->nb_entries >= hds->size) {
+        en = hds->list;
+        hds->list = en->next;
         av_free(en);
     } else
-        hls->nb_entries++;
+        hds->nb_entries++;
 
     return 0;
 }
 
-static void free_entries(HDSContext *hls)
+static void free_entries(HDSContext *hds)
 {
-    ListEntry *p = hls->list, *en;
+    ListEntry *p = hds->list, *en;
 
     while(p) {
         en = p;
@@ -137,20 +138,20 @@ static void free_entries(HDSContext *hls)
 
 static int hds_window(AVFormatContext *s, int last)
 {
-    HDSContext *hls = s->priv_data;
+    HDSContext *hds = s->priv_data;
     int ret = 0;
 
     // :TODO: generate abst file & make this configurable
     return ret;
 
-    if ((ret = avio_open2(&hls->pb, s->filename, AVIO_FLAG_WRITE,
+    if ((ret = avio_open2(&hds->pb, s->filename, AVIO_FLAG_WRITE,
                           &s->interrupt_callback, NULL)) < 0)
         goto fail;
 
     // :TODO:
 
 fail:
-    avio_closep(&hls->pb);
+    avio_closep(&hds->pb);
     return ret;
 }
 
@@ -183,48 +184,48 @@ static int hds_start(AVFormatContext *s)
 
 static int hds_write_header(AVFormatContext *s)
 {
-    HDSContext *hls = s->priv_data;
+    HDSContext *hds = s->priv_data;
     int ret, i;
     char *p;
     const char *pattern = "/Seg1-Frag%d";
     int basename_size = strlen(s->filename) + strlen(pattern) + 1;
 
-    hls->number      = hls->start_fragment - 1;
+    hds->number      = hds->start_fragment - 1;
 
-    hls->recording_time = hls->time * AV_TIME_BASE;
-    hls->start_pts      = AV_NOPTS_VALUE;
+    hds->recording_time = hds->time * AV_TIME_BASE;
+    hds->start_pts      = AV_NOPTS_VALUE;
 
     for (i = 0; i < s->nb_streams; i++)
-        hls->has_video +=
+        hds->has_video +=
             s->streams[i]->codec->codec_type == AVMEDIA_TYPE_VIDEO;
 
-    if (hls->has_video > 1)
+    if (hds->has_video > 1)
         av_log(s, AV_LOG_WARNING,
                "More than a single video stream present, "
                "expect issues decoding it.\n");
 
-    hls->oformat = av_guess_format("flv", NULL, NULL);
+    hds->oformat = av_guess_format("flv", NULL, NULL);
 
-    if (!hls->oformat) {
+    if (!hds->oformat) {
         ret = AVERROR_MUXER_NOT_FOUND;
         goto fail;
     }
 
-    hls->basename = av_malloc(basename_size);
+    hds->basename = av_malloc(basename_size);
 
-    if (!hls->basename) {
+    if (!hds->basename) {
         ret = AVERROR(ENOMEM);
         goto fail;
     }
 
-    strcpy(hls->basename, s->filename);
+    strcpy(hds->basename, s->filename);
 
-    p = strrchr(hls->basename, '/');
+    p = strrchr(hds->basename, '/');
 
     if (p)
         *p = '\0';
 
-    av_strlcat(hls->basename, pattern, basename_size);
+    av_strlcat(hds->basename, pattern, basename_size);
 
     if ((ret = hds_mux_init(s)) < 0)
         goto fail;
@@ -232,14 +233,14 @@ static int hds_write_header(AVFormatContext *s)
     if ((ret = hds_start(s)) < 0)
         goto fail;
 
-    if ((ret = avformat_write_header(hls->avf, NULL)) < 0)
+    if ((ret = avformat_write_header(hds->avf, NULL)) < 0)
         return ret;
 
 fail:
     if (ret) {
-        av_free(hls->basename);
-        if (hls->avf)
-            avformat_free_context(hls->avf);
+        av_free(hds->basename);
+        if (hds->avf)
+            avformat_free_context(hds->avf);
     }
     return ret;
 }
@@ -254,19 +255,19 @@ static inline char *av_ts_make_full_time_string(char *buf, int64_t ts, AVRationa
 
 static int hds_write_packet(AVFormatContext *s, AVPacket *pkt)
 {
-    HDSContext *hls = s->priv_data;
-    AVFormatContext *oc = hls->avf;
+    HDSContext *hds = s->priv_data;
+    AVFormatContext *oc = hds->avf;
     AVStream *st = s->streams[pkt->stream_index];
-    int64_t end_pts = hls->recording_time * hls->number;
+    int64_t end_pts = hds->recording_time * hds->number;
     int is_ref_pkt = 1;
     int ret, can_split = 1;
 
-    if (hls->start_pts == AV_NOPTS_VALUE) {
-        hls->start_pts = pkt->pts;
-        hls->end_pts   = pkt->pts;
+    if (hds->start_pts == AV_NOPTS_VALUE) {
+        hds->start_pts = pkt->pts;
+        hds->end_pts   = pkt->pts;
     }
 
-    if (hls->has_video) {
+    if (hds->has_video) {
         can_split = st->codec->codec_type == AVMEDIA_TYPE_VIDEO &&
                     pkt->flags & AV_PKT_FLAG_KEY;
         is_ref_pkt = st->codec->codec_type == AVMEDIA_TYPE_VIDEO;
@@ -275,17 +276,17 @@ static int hds_write_packet(AVFormatContext *s, AVPacket *pkt)
         is_ref_pkt = can_split = 0;
 
     if (is_ref_pkt)
-        hls->duration = av_rescale(pkt->pts - hls->end_pts,
+        hds->duration = av_rescale(pkt->pts - hds->end_pts,
                                    st->time_base.num, st->time_base.den);
 
-    if (can_split && av_compare_ts(pkt->pts - hls->start_pts, st->time_base,
+    if (can_split && av_compare_ts(pkt->pts - hds->start_pts, st->time_base,
                                    end_pts, AV_TIME_BASE_Q) >= 0) {
-        ret = append_entry(hls, hls->duration);
+        ret = append_entry(hds, hds->duration);
         if (ret)
             return ret;
 
-        hls->end_pts = pkt->pts;
-        hls->duration = 0;
+        hds->end_pts = pkt->pts;
+        hds->duration = 0;
 
         // tell flv muxer to end mdat box
         av_write_frame(oc, NULL);
@@ -296,18 +297,18 @@ static int hds_write_packet(AVFormatContext *s, AVPacket *pkt)
         if (ret)
             return ret;
 
-        oc = hls->avf;
+        oc = hds->avf;
 
         if ((ret = hds_window(s, 0)) < 0)
             return ret;
     }
 
-    if (hls->is_first_pkt) {
+    if (hds->is_first_pkt) {
         char time_buf[64];
         av_log(s, AV_LOG_WARNING, "hds:'%s' starts with packet stream:%d pts:%s pts_time:%s\n",
-               hls->avf->filename, pkt->stream_index,
+               hds->avf->filename, pkt->stream_index,
                av_ts2str(pkt->pts), av_ts_make_full_time_string(time_buf, pkt->pts, &st->time_base));
-        hls->is_first_pkt = 0;
+        hds->is_first_pkt = 0;
     }
 
     ret = ff_write_chained(oc, pkt->stream_index, pkt, s);
@@ -317,19 +318,19 @@ static int hds_write_packet(AVFormatContext *s, AVPacket *pkt)
 
 static int hds_write_trailer(struct AVFormatContext *s)
 {
-    HDSContext *hls = s->priv_data;
-    AVFormatContext *oc = hls->avf;
+    HDSContext *hds = s->priv_data;
+    AVFormatContext *oc = hds->avf;
 
     // :TRICKY: No trailer call(s) because we have no headers to update!
     //av_write_trailer(oc);
     avio_closep(&oc->pb);
     avformat_free_context(oc);
-    av_free(hls->basename);
-    append_entry(hls, hls->duration);
+    av_free(hds->basename);
+    append_entry(hds, hds->duration);
     hds_window(s, 1);
 
-    free_entries(hls);
-    avio_close(hls->pb);
+    free_entries(hds);
+    avio_close(hds->pb);
     return 0;
 }
 
