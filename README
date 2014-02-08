@@ -1,3 +1,11 @@
+HDS Muxer README
+----------
+
+This code runs http://zabava.ru video service. How to use:
+- build hds-dvr branch
+- command line example: ffmpeg -i udp://127.0.0.1:7777 -codec copy -f hds -hds_time 6 /path/to/manifest.f4m
+- no .abst or .f4m files, only Seg1-FragN
+
 FFmpeg README
 -------------
 
